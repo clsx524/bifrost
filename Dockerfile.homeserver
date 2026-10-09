@@ -1,0 +1,40 @@
+# Home-server build of dev. Upstream's transports/Dockerfile resolves core/framework
+# from published module versions (GOWORK=off), which dev's code has outrun, so
+# build in a go.work workspace over the in-repo modules instead (as `make` does).
+FROM node:25-alpine AS ui-builder
+WORKDIR /app
+RUN apk upgrade --no-cache
+COPY ui/package*.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build-enterprise
+
+FROM golang:1.27-alpine AS builder
+WORKDIR /src
+RUN apk upgrade --no-cache && apk add --no-cache gcc musl-dev sqlite-dev binutils binutils-gold
+ENV CGO_ENABLED=1 GOOS=linux
+COPY . .
+COPY --from=ui-builder /app/out ./transports/bifrost-http/ui
+RUN go work init ./core ./framework ./transports $(ls -d ./plugins/*/) \
+ && go work sync || true
+ARG VERSION=unknown
+RUN cd transports && go build \
+    -ldflags="-w -s -X main.Version=v${VERSION} -extldflags '-static'" \
+    -a -trimpath -tags "sqlite_static" -o /app/main ./bifrost-http \
+ && test -f /app/main
+
+FROM alpine:3.23
+WORKDIR /app
+RUN apk upgrade --no-cache && apk add --no-cache musl libgcc ca-certificates zlib
+COPY --from=builder /app/main .
+COPY --from=builder /src/transports/docker-entrypoint.sh .
+ENV APP_PORT=8080 APP_HOST=0.0.0.0 LOG_LEVEL=info LOG_STYLE=json APP_DIR=/app/data
+RUN mkdir -p "$APP_DIR/logs" && adduser -D -s /bin/sh appuser \
+ && chown -R appuser:appuser /app && chown -R appuser:0 "$APP_DIR" \
+ && chmod -R g=rwX "$APP_DIR" && chmod +x /app/docker-entrypoint.sh
+USER 1000:0
+VOLUME ["/app/data"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:${APP_PORT}/health || exit 1
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

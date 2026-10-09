@@ -48,6 +48,30 @@ func SetDiscoveryDialContextForTests(dial func(ctx context.Context, network, add
 // Mirrors core/providers/utils/fetch.go's FetchAndEncodeURL: dial-time IP
 // validation (defeats DNS rebinding, unlike a save-time-only check) and
 // redirect re-validation, so a 3xx mid-chain can't hop the guard.
+// oauthTrustedHostsEnv names an operator-declared, comma-separated list of
+// hostnames, IPs or CIDRs (e.g. "gitlab.example.com,100.64.0.0/10") that OAuth
+// discovery, registration and token-exchange requests may reach even when they
+// resolve to a private, loopback or CGNAT address - for self-hosted
+// authorization servers on a private network or tailnet. Read once at startup;
+// a malformed entry aborts startup rather than silently becoming a no-op. Unset
+// keeps the strict public-only guard.
+const oauthTrustedHostsEnv = "BIFROST_OAUTH_TRUSTED_HOSTS"
+
+// oauthTrustedAllowlist is the parsed oauthTrustedHostsEnv (nil when unset).
+var oauthTrustedAllowlist = mustOAuthAllowlistFromEnv()
+
+func mustOAuthAllowlistFromEnv() *network.Allowlist {
+	raw := strings.TrimSpace(os.Getenv(oauthTrustedHostsEnv))
+	if raw == "" {
+		return nil
+	}
+	allow, err := network.NewAllowlist(strings.Split(raw, ","))
+	if err != nil {
+		panic(fmt.Sprintf("%s: %v", oauthTrustedHostsEnv, err))
+	}
+	return allow
+}
+
 // oauthDiscoveryTransport is the one guarded transport every OAuth discovery,
 // registration and token-exchange client shares, so connections are reused
 // across flows and idle sockets are bounded instead of accumulating per call.
@@ -58,7 +82,7 @@ func SetDiscoveryDialContextForTests(dial func(ctx context.Context, network, add
 // The allowlisted one is replaced whenever the allowlist changes; see
 // SetPrivateTargetAllowlist.
 var (
-	oauthDiscoveryTransport            = newOAuthDiscoveryTransport(oauthDialContext(10*time.Second, network.SSRFSafeDialContext(10*time.Second), proxiesFromEnvironment()...))
+	oauthDiscoveryTransport            = newOAuthDiscoveryTransport(oauthDialContext(10*time.Second, network.SSRFSafeDialContextWithAllowlist(10*time.Second, oauthTrustedAllowlist), proxiesFromEnvironment()...))
 	oauthAllowlistedDiscoveryTransport atomic.Pointer[http.Transport]
 )
 
