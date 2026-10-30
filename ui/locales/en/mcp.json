@@ -422,7 +422,7 @@
 			"toolExecutionTimeoutHelp": "Override the global tool execution timeout for this server. Leave empty or set to 0 to use the global setting.",
 			"disableClientHelp": "When enabled, the client's connection, health monitor, and tool syncer are shut down. Tools from this client will not be available for inference until it is re-enabled.",
 			"oauthDisabledRotate": "OAuth config cannot be rotated while the client is disabled. Re-enable the client to update it.",
-			"oauthRotateWarning": "Changing any OAuth config field immediately signs out every current session on this MCP client, shared and per-user alike. Everyone will need to re-authenticate.",
+			"oauthRotateWarning": "Changing any OAuth config field immediately signs out every current session on this MCP client, shared and per-user alike. Everyone will need to re-authenticate. If you change the custom redirect URI for a dynamically registered client, use Reauthorize with a new client so the provider registers the new URI.",
 			"tokenExchangeEvictWarning": "Changing any token exchange field immediately evicts every cached exchanged token for this server. The next tool call for each caller re-exchanges a fresh token.",
 			"extraHeadersPlaceholder": "*, or: authorization, x-user-id",
 			"autoExecuteHelp": "Applies only when Bifrost runs the LLM loop in Agent Mode. In MCP Gateway mode, the connected client (Claude Desktop, Cursor, etc.) controls tool approval and this setting is ignored. Click to learn more.",

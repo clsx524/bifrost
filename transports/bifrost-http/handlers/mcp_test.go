@@ -893,6 +893,11 @@ func TestUseClientMetadataDocument_ReachesTheProvider(t *testing.T) {
 
 	req := pendingOAuthConfigToRequest(&schemas.OAuth2Config{UseClientMetadataDocument: true})
 	assert.True(t, req.UseClientMetadataDocument, "a config.json client's toggle survives to initiate-verification")
+
+	redirectURIOverride := "http://localhost:8765/api/oauth/callback"
+	req = pendingOAuthConfigToRequest(&schemas.OAuth2Config{RedirectURIOverride: redirectURIOverride})
+	require.NotNil(t, req.RedirectURIOverride)
+	assert.Equal(t, redirectURIOverride, *req.RedirectURIOverride)
 }
 
 // A toggle the caller set wrongly is a 400, not a server error.
@@ -902,6 +907,8 @@ func TestOAuthBootstrapErrorStatus(t *testing.T) {
 	assert.Equal(t, fasthttp.StatusBadRequest, oauthBootstrapErrorStatus(fmt.Errorf("x: %w", &network.PrivateTargetNotAllowedError{Host: "127.0.0.1", IP: net.ParseIP("127.0.0.1")})))
 	assert.Equal(t, fasthttp.StatusBadRequest, oauthBootstrapErrorStatus(fmt.Errorf("x: %w", oauth2.ErrOAuthDiscoveryFailed)), "endpoints the caller has to provide")
 	assert.Equal(t, fasthttp.StatusInternalServerError, oauthBootstrapErrorStatus(errors.New("discovery failed")))
+	assert.Equal(t, fasthttp.StatusBadRequest, oauthBootstrapErrorStatus(schemas.ErrInvalidOAuthRedirectURIOverride))
+	assert.Equal(t, fasthttp.StatusBadRequest, oauthBootstrapErrorStatus(oauth2.ErrRedirectURIOverrideWithClientMetadataDocument))
 }
 
 // capturingAddMCPManager records the config the add handler hands the manager, then stops the add.

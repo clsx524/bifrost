@@ -224,6 +224,7 @@ export interface OAuthConfig {
 	server_url?: string; // MCP server URL for OAuth discovery (automatically set from connection_string)
 	resource?: string; // Optional OAuth resource indicator; omitted when empty
 	use_client_metadata_document?: boolean; // Register with Bifrost's Client ID Metadata Document; excludes client_id
+	redirect_uri_override?: string; // Exact redirect_uri registered and sent upstream; HTTPS or HTTP loopback
 }
 
 /** OAuth fields allowed on MCP client update. Any field left unset keeps its stored value. */
@@ -235,6 +236,7 @@ export interface OAuthConfigUpdate {
 	registration_url?: string;
 	scopes?: string[];
 	resource?: string;
+	redirect_uri_override?: string; // Empty string clears the stored override
 }
 
 // Code mode on a client's own /mcp/<slug>; "inherit" follows is_code_mode_client.
@@ -263,6 +265,7 @@ export interface MCPClientConfig {
 	oauth_registration_url?: string;
 	oauth_scopes?: string[];
 	oauth_resource?: string;
+	oauth_redirect_uri_override?: string;
 	tools_to_execute?: string[];
 	tools_to_auto_execute?: string[];
 	prompts_to_expose?: string[] | null; // Prompts served through the gateway; null/absent = all, [] = none

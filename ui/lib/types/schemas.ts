@@ -2024,6 +2024,21 @@ export const mcpOpenAPIConfigSchema = mcpOpenAPIConfigBaseSchema.superRefine((v,
 });
 export type MCPOpenAPIConfigSchema = z.infer<typeof mcpOpenAPIConfigSchema>;
 
+export function isValidOAuthRedirectURIOverride(value?: string): boolean {
+	const raw = value?.trim();
+	if (!raw) return true;
+	if (raw.length > 2048) return false;
+	if (raw.includes("\\")) return false;
+	try {
+		const parsed = new URL(raw);
+		if (parsed.username || parsed.password || parsed.hash) return false;
+		if (parsed.protocol === "https:") return true;
+		const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+		return parsed.protocol === "http:" && (host === "localhost" || /^127(?:\.\d{1,3}){3}$/.test(host) || host === "::1");
+	} catch {
+		return false;
+	}
+}
 // MCP Client update schema
 export const mcpClientUpdateSchema = z
 	.object({
@@ -2096,6 +2111,7 @@ export const mcpClientUpdateSchema = z
 				},
 				{ error: () => i18n.t("validation.duplicateToolNamesAreNotAllowed") },
 			),
+
 		prompts_to_expose: z.array(z.string()).optional(), // ["*"] = all, [] = none
 		resources_to_expose: z.array(z.string()).optional(), // ["*"] = all, [] = none
 		tool_pricing: z.record(z.string(), z.number().min(0, msg("validation.costMustBeNonNegative"))).optional(),
@@ -2132,6 +2148,9 @@ export const mcpClientUpdateSchema = z
 					.refine((val) => !val || /^https?:\/\/.+$/.test(val), {
 						error: () => i18n.t("validation.registrationUrlMustStartWithHttpOrHttps"),
 					}),
+				redirect_uri_override: z.string().max(2048).optional().refine(isValidOAuthRedirectURIOverride, {
+					message: "Redirect URI must be HTTPS or an HTTP localhost/loopback URL without user info or a fragment",
+				}),
 				scopes: z.array(z.string()).optional(),
 				resource: z.string().optional(),
 				use_client_metadata_document: z.boolean().optional(),

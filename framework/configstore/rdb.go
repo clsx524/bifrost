@@ -9255,14 +9255,16 @@ func (s *RDBConfigStore) MarkAdminExchangeTokenNeedsReauthByMCPClientID(ctx cont
 // are missing") and nothing reads it, so there is no live behavior to wire
 // a rotation path for.
 type MCPOAuthConfigFields struct {
-	ClientID        *schemas.SecretVar
-	ClientSecret    *schemas.SecretVar
-	AuthorizeURL    string
-	TokenURL        string
-	RegistrationURL string // "" means no registration URL stored (maps to a nil *string on the row)
-	Resource        string
-	Scopes          []string
-	RedirectURI     string // "" keeps the stored redirect_uri
+	ClientID               *schemas.SecretVar
+	ClientSecret           *schemas.SecretVar
+	AuthorizeURL           string
+	TokenURL               string
+	RegistrationURL        string // "" means no registration URL stored (maps to a nil *string on the row)
+	Resource               string
+	Scopes                 []string
+	RedirectURI            string // "" keeps the stored redirect_uri
+	RedirectURIOverride    string
+	SetRedirectURIOverride bool // true applies RedirectURIOverride, including clearing it
 
 	// The authorization-server binding; callers that do not set it resolve it with KeepBinding.
 	Issuer                 string
@@ -9325,6 +9327,7 @@ func (fields MCPOAuthConfigFields) DiffersFrom(existingOauthConfig *tables.Table
 		fields.RegistrationURL != existingRegistrationURL ||
 		fields.Resource != existingOauthConfig.Resource ||
 		(fields.RedirectURI != "" && fields.RedirectURI != existingOauthConfig.RedirectURI) ||
+		(fields.SetRedirectURIOverride && fields.RedirectURIOverride != existingOauthConfig.RedirectURIOverride) ||
 		!slices.Equal(newScopesSorted, existingScopesSorted) ||
 		// A new issuer is a new authorization server even at the same URLs; "" means not provided.
 		(fields.Issuer != "" && fields.Issuer != existingOauthConfig.Issuer)
@@ -9376,6 +9379,9 @@ func (s *RDBConfigStore) RotateMCPOAuthConfig(ctx context.Context, existingOauth
 	existingOauthConfig.Resource = fields.Resource
 	if fields.RedirectURI != "" {
 		existingOauthConfig.RedirectURI = fields.RedirectURI
+	}
+	if fields.SetRedirectURIOverride {
+		existingOauthConfig.RedirectURIOverride = fields.RedirectURIOverride
 	}
 	existingOauthConfig.Issuer = fields.Issuer
 	existingOauthConfig.IssParameterSupported = fields.IssParameterSupported

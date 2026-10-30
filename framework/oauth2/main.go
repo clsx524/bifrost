@@ -783,11 +783,18 @@ func (p *OAuth2Provider) InitiateOAuthFlow(ctx context.Context, config *schemas.
 	clientID := config.ClientID // carries env./vault. reference metadata; resolved at use time
 	clientSecret := config.ClientSecret
 
+	if err := schemas.ValidateOAuthRedirectURIOverride(config.RedirectURIOverride); err != nil {
+		return nil, err
+	}
+	if config.RedirectURIOverride != "" && config.UseClientMetadataDocument {
+		return nil, ErrRedirectURIOverrideWithClientMetadataDocument
+	}
+
 	// Hand-entered endpoints skip discovery; read the issuer and CIMD flag separately.
 	if !needsDiscovery && config.ServerURL != "" {
 		discovered = metadataForTokenURL(ctx, config.ServerURL, tokenURL)
 	}
-	supportsClientMetadataDocument := config.UseClientMetadataDocument || (discovered != nil && discovered.ClientIDMetadataDocumentSupported)
+	supportsClientMetadataDocument := config.RedirectURIOverride == "" && (config.UseClientMetadataDocument || (discovered != nil && discovered.ClientIDMetadataDocumentSupported))
 
 	// Prefer CIMD over DCR (deprecated in 2026-07-28).
 	clientMetadataDocument := false
@@ -839,18 +846,19 @@ func (p *OAuth2Provider) InitiateOAuthFlow(ctx context.Context, config *schemas.
 	// (see BuildUpstreamAuthorizeURL).
 	expiresAt := time.Now().Add(15 * time.Minute)
 	oauthConfigRecord := &tables.TableOauthConfig{
-		ID:              oauthConfigID,
-		ClientID:        clientID, // May be from dynamic registration
-		ClientSecret:    clientSecret,
-		AuthorizeURL:    authorizeURL,
-		TokenURL:        tokenURL,
-		RegistrationURL: registrationURL,
-		RedirectURI:     config.RedirectURI,
-		Scopes:          string(scopesJSON),
-		Resource:        resource,
-		Status:          "pending",
-		ServerURL:       config.ServerURL,
-		UseDiscovery:    config.UseDiscovery,
+		ID:                  oauthConfigID,
+		ClientID:            clientID, // May be from dynamic registration
+		ClientSecret:        clientSecret,
+		AuthorizeURL:        authorizeURL,
+		TokenURL:            tokenURL,
+		RegistrationURL:     registrationURL,
+		RedirectURI:         config.RedirectURI,
+		RedirectURIOverride: config.RedirectURIOverride,
+		Scopes:              string(scopesJSON),
+		Resource:            resource,
+		Status:              "pending",
+		ServerURL:           config.ServerURL,
+		UseDiscovery:        config.UseDiscovery,
 
 		DynamicallyRegistered:  dynamicallyRegistered,
 		ClientMetadataDocument: clientMetadataDocument,
@@ -1586,6 +1594,10 @@ func (p *OAuth2Provider) InitiateUserOAuthFlow(ctx context.Context, oauthConfigI
 		return nil, "", schemas.ErrOAuth2ConfigNotFound
 	}
 
+	if templateConfig.RedirectURIOverride != "" {
+		redirectURI = templateConfig.RedirectURIOverride
+	}
+
 	// 2. Resolve identity from context for the given mode. Required (no
 	//    fallbacks). Each mode populates exactly one of (vkId, uid, sessionID).
 	var (
@@ -1700,11 +1712,15 @@ func (p *OAuth2Provider) InitiateUserOAuthFlow(ctx context.Context, oauthConfigI
 	// endpoint using the stored CSRF state + PKCE verifier — we don't pin it
 	// here so the row stays the single source of truth for those fields.
 	//
-	// Derive the Bifrost base URL from the OAuth callback redirect URI passed
-	// in by the caller — it always has the shape "{base}/api/oauth/callback".
-	// Flow ID rides as a query param to match the flat-route convention used
-	// elsewhere in the dashboard UI.
-	frontendURL := strings.TrimSuffix(redirectURI, "/api/oauth/callback") + "/workspace/mcp-sessions/auth?flow=" + sessionID
+	// A custom upstream redirect URI may be loopback and is therefore not the
+	// Bifrost dashboard origin. Prefer the callback base installed on the
+	// request context; retain the redirect-derived fallback for admin callers
+	// and older integrations that do not install it.
+	frontendBase, _ := ctx.Value(schemas.BifrostContextKeyMCPCallbackBaseURL).(string)
+	if frontendBase == "" {
+		frontendBase = strings.TrimSuffix(redirectURI, "/api/oauth/callback")
+	}
+	frontendURL := strings.TrimRight(frontendBase, "/") + "/workspace/mcp-sessions/auth?flow=" + sessionID
 
 	// Mint a mcp_auth temp token bound to this flow's row ID and embed it in
 	// the URL as a fragment so a browser hitting the auth page without a
@@ -1781,6 +1797,10 @@ var (
 	// ErrOAuthDiscoveryFailed means the authorization endpoints could not be discovered from the MCP
 	// server, so the caller has to provide them in the OAuth config.
 	ErrOAuthDiscoveryFailed = errors.New("OAuth discovery failed")
+
+	// ErrRedirectURIOverrideWithClientMetadataDocument means the exact
+	// redirect URI is not the one advertised by Bifrost's metadata document.
+	ErrRedirectURIOverrideWithClientMetadataDocument = errors.New("redirect_uri_override cannot be combined with use_client_metadata_document")
 )
 
 // ReregisterDynamicClient obtains a fresh client_id (and secret, if the
@@ -1851,13 +1871,14 @@ func (p *OAuth2Provider) ReregisterDynamicClient(ctx context.Context, oauthConfi
 
 	previousClientID = templateConfig.GetResolvedClientID()
 	fields := configstore.MCPOAuthConfigFields{
-		ClientID:        clientID,
-		ClientSecret:    clientSecret,
-		AuthorizeURL:    templateConfig.AuthorizeURL,
-		TokenURL:        templateConfig.TokenURL,
-		RegistrationURL: registrationURL,
-		Resource:        templateConfig.Resource,
-		Scopes:          scopes,
+		ClientID:            clientID,
+		ClientSecret:        clientSecret,
+		AuthorizeURL:        templateConfig.AuthorizeURL,
+		TokenURL:            templateConfig.TokenURL,
+		RegistrationURL:     registrationURL,
+		Resource:            templateConfig.Resource,
+		Scopes:              scopes,
+		RedirectURIOverride: templateConfig.RedirectURIOverride,
 
 		Issuer:                templateConfig.Issuer,
 		IssParameterSupported: templateConfig.IssParameterSupported,

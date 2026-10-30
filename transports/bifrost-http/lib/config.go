@@ -2805,11 +2805,12 @@ func rotateMCPOauthConfigFromFile(ctx context.Context, store configstore.ConfigS
 		return false
 	}
 	fields := configstore.MCPOAuthConfigFields{
-		ClientID:     authorizedOauth.ClientID,
-		ClientSecret: authorizedOauth.ClientSecret,
-		AuthorizeURL: authorizedOauth.AuthorizeURL,
-		TokenURL:     authorizedOauth.TokenURL,
-		Resource:     authorizedOauth.Resource,
+		ClientID:            authorizedOauth.ClientID,
+		ClientSecret:        authorizedOauth.ClientSecret,
+		AuthorizeURL:        authorizedOauth.AuthorizeURL,
+		TokenURL:            authorizedOauth.TokenURL,
+		Resource:            authorizedOauth.Resource,
+		RedirectURIOverride: authorizedOauth.RedirectURIOverride,
 	}
 	if authorizedOauth.RegistrationURL != nil {
 		fields.RegistrationURL = *authorizedOauth.RegistrationURL
@@ -2864,6 +2865,15 @@ func rotateMCPOauthConfigFromFile(ctx context.Context, store configstore.ConfigS
 	}
 	if fileBlock.Scopes != nil {
 		fields.Scopes = fileBlock.Scopes
+	}
+	if fileBlock.RedirectURIOverride != "" {
+		redirectURIOverride := strings.TrimSpace(fileBlock.RedirectURIOverride)
+		if err := schemas.ValidateOAuthRedirectURIOverride(redirectURIOverride); err != nil {
+			logger.Warn("invalid oauth redirect_uri_override for MCP client %q; keeping the stored value: %v", clientName, err)
+			return true
+		}
+		fields.RedirectURIOverride = redirectURIOverride
+		fields.SetRedirectURIOverride = true
 	}
 	fields.KeepBinding(authorizedOauth)
 	rotated, err := store.RotateMCPOAuthConfig(ctx, authorizedOauth, fields)

@@ -152,7 +152,7 @@ Declare the client with an inline `oauth_config` block:
 The `oauth_config` block itself is optional, and every inner field is optional. `authorize_url` / `token_url` come from RFC 8414 discovery off `connection_string` when the upstream supports it, and `client_id` / `client_secret` can be obtained via RFC 7591 Dynamic Client Registration. The minimum viable declaration is `{ "auth_type": "oauth", "connection_string": "..." }`.
 
 <Note>
-`client_id` and `client_secret` support `env.VAR_NAME` and `vault.path` references — `"client_secret": "env.GITHUB_SECRET"` resolves from the environment at runtime, and the reference (not the resolved secret) is what gets stored. Plain values also work (encrypted at rest, redacted in API responses). The other fields (`authorize_url`, `token_url`, `registration_url`, `scopes`) take literal values only.
+`client_id` and `client_secret` support `env.VAR_NAME` and `vault.path` references — `"client_secret": "env.GITHUB_SECRET"` resolves from the environment at runtime, and the reference (not the resolved secret) is what gets stored. Plain values also work (encrypted at rest, redacted in API responses). The other fields (`authorize_url`, `token_url`, `registration_url`, `redirect_uri_override`, `resource`, `scopes`) take literal values only.
 </Note>
 
 At boot the client lands in **`pending_verification`** state because the OAuth flow still needs a live admin browser session to complete. From the MCP Gateway UI, open the client and click **Authorize** — the same browser popup the Web UI Create flow uses. On success the OAuth tokens are stored, the tool list is discovered, and the client transitions to `healthy`.
@@ -272,6 +272,35 @@ Bifrost will:
 
 <Warning>
 The `redirect_uri` Bifrost registers with the upstream provider is locked to Bifrost's current public URL (`mcp_external_client_url`, or the request `Host` header if unset). If you change Bifrost's public URL later, the upstream provider will reject the next authorize call with **"Invalid redirect URI"**. Plain reauthorization reuses the registered client, so it cannot fix the mismatch on its own: use [Reauthorize with a new client](#reauthorizing-with-a-new-client) so Bifrost re-runs DCR against the new URL. (For manually registered credentials, add the new redirect URI in the provider's dashboard instead, then [reauthorize](#reauthorization).)
+</Warning>
+
+### Providers that require a loopback redirect URI
+
+Some providers accept Dynamic Client Registration only when `redirect_uri` is a fixed loopback URL. Set **Custom Redirect URI** in the OAuth form, or declare `redirect_uri_override`:
+
+```json
+{
+  "oauth_config": {
+    "registration_url": "https://auth.example.com/oauth/register",
+    "redirect_uri_override": "http://localhost:8765/api/oauth/callback"
+  }
+}
+```
+
+Bifrost registers this exact URI, includes it in the authorization request, stores it on the flow, and sends it again during the code exchange. Client ID Metadata Documents are disabled for this connection because their published redirect URI would not match the override.
+
+The provider redirects the browser to the loopback address, not to Bifrost. If no local listener is running, copy the complete query string from the failed browser URL and open Bifrost's public callback instead:
+
+```text
+http://localhost:8765/api/oauth/callback?code=CODE&state=STATE
+                                    ↓
+https://bifrost.example.com/api/oauth/callback?code=CODE&state=STATE
+```
+
+Keep `code`, `state`, and every other query parameter unchanged. Bifrost receives the callback at its normal public route but exchanges the code with the original loopback `redirect_uri`.
+
+<Warning>
+Changing or clearing the override signs out existing sessions. For a dynamically registered client, then use **Reauthorize with a new client** so the provider registers the new URI; plain reauthorization reuses the old client registration.
 </Warning>
 
 ---
@@ -408,7 +437,7 @@ A successful background refresh doesn't just update the stored token: for shared
 
 ### Rotation
 
-`PUT /api/mcp/client/{id}` accepts an `oauth_config` block for clients with `auth_type` `oauth` or `per_user_oauth` (400 for any other auth type). Any field can be rotated: `client_id`, `client_secret`, `authorize_url`, `token_url`, `registration_url`, `resource`, `scopes`. Rotation applies the changed fields **in place** on the same OAuth config row; it does not create a new row and does not re-run discovery or client registration.
+`PUT /api/mcp/client/{id}` accepts an `oauth_config` block for clients with `auth_type` `oauth` or `per_user_oauth` (400 for any other auth type). Any field can be rotated: `client_id`, `client_secret`, `authorize_url`, `token_url`, `registration_url`, `redirect_uri_override`, `resource`, `scopes`. Rotation applies the changed fields **in place** on the same OAuth config row; it does not create a new row and does not re-run discovery or client registration. An explicit empty `redirect_uri_override` clears the override.
 
 ```bash
 curl -X PUT http://localhost:8080/api/mcp/client/mcp_client_abc123 \
@@ -563,14 +592,14 @@ This deletes the stored token from Bifrost and marks the OAuth configuration `re
 
 ## Public URL configuration
 
-The `redirect_uri` Bifrost registers and the consent URLs it builds are derived from the request `Host` header by default. Behind a reverse proxy, override them with:
+The consent pages Bifrost surfaces are derived from the request `Host` header by default. Its upstream OAuth `redirect_uri` uses the same base unless that MCP connection sets `redirect_uri_override`. Behind a reverse proxy, configure:
 
-- `mcp_external_client_url` — public base URL Bifrost uses both for the consent pages it surfaces and as the `redirect_uri` registered with upstream providers. Include the `server.base_path` prefix if Bifrost is served under one; it is used as given.
+- `mcp_external_client_url` — public base URL Bifrost uses both for the consent pages it surfaces and as the default `redirect_uri` registered with upstream providers. Include the `server.base_path` prefix if Bifrost is served under one; it is used as given. A connection that sets `redirect_uri_override` uses that URI instead.
 
 See [Reverse Proxy configuration →](../../deployment-guides/config-json/client#reverse-proxy) for the full reference.
 
 <Warning>
-**Changing `mcp_external_client_url` after an upstream provider has been registered breaks already-authorized clients registered through DCR or by hand.** Upstream providers lock the `redirect_uri` to whatever was registered during DCR. To recover a DCR client, use [Reauthorize with a new client](#reauthorizing-with-a-new-client) so Bifrost registers again with the new URL (plain reauthorization reuses the registered client and cannot fix the mismatch). For manually registered credentials, add the new redirect URI at the provider's dashboard, then [reauthorize](#reauthorization). Clients using the [client metadata document](#client-id-metadata-documents) Bifrost serves need no action: their client ID follows the new address at the next sign-in, and existing sessions sign in again. If you [host the document yourself](#hosting-the-document-yourself), publish it again with the new callback, or sign-in fails with a redirect URI mismatch.
+**Changing `mcp_external_client_url` after an upstream provider has been registered breaks already-authorized clients registered through DCR or by hand.** Upstream providers lock the `redirect_uri` to whatever was registered during DCR. To recover a DCR client, use [Reauthorize with a new client](#reauthorizing-with-a-new-client) so Bifrost registers again with the new URL (plain reauthorization reuses the registered client and cannot fix the mismatch). For manually registered credentials, add the new redirect URI at the provider's dashboard, then [reauthorize](#reauthorization). A client with `redirect_uri_override` keeps using its override, so only its Bifrost consent-page links move. Clients using the [client metadata document](#client-id-metadata-documents) Bifrost serves need no action: their client ID follows the new address at the next sign-in, and existing sessions sign in again. If you [host the document yourself](#hosting-the-document-yourself), publish it again with the new callback, or sign-in fails with a redirect URI mismatch.
 </Warning>
 
 ---

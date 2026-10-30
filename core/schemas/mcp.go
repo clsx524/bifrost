@@ -26,15 +26,16 @@ import (
 
 // OAuth-related errors
 var (
-	ErrOAuth2ConfigNotFound       = errors.New("oauth2 config not found")
-	ErrOAuth2ProviderNotAvailable = errors.New("oauth2 provider not available")
-	ErrOAuth2TokenExpired         = errors.New("oauth2 token expired")
-	ErrOAuth2TokenInvalid         = errors.New("oauth2 token invalid")
-	ErrOAuth2RefreshFailed        = errors.New("oauth2 token refresh failed")
-	ErrOAuth2NotPerUserSession    = errors.New("state does not match a per-user oauth session")
-	ErrOAuth2TokenNotFound        = errors.New("per-user oauth token not found for this identity and mcp server")
-	ErrOAuth2FlowNotPending       = errors.New("oauth flow is not in pending state")
-	ErrOAuth2FlowExpired          = errors.New("oauth flow has expired")
+	ErrOAuth2ConfigNotFound            = errors.New("oauth2 config not found")
+	ErrOAuth2ProviderNotAvailable      = errors.New("oauth2 provider not available")
+	ErrInvalidOAuthRedirectURIOverride = errors.New("invalid OAuth redirect URI override")
+	ErrOAuth2TokenExpired              = errors.New("oauth2 token expired")
+	ErrOAuth2TokenInvalid              = errors.New("oauth2 token invalid")
+	ErrOAuth2RefreshFailed             = errors.New("oauth2 token refresh failed")
+	ErrOAuth2NotPerUserSession         = errors.New("state does not match a per-user oauth session")
+	ErrOAuth2TokenNotFound             = errors.New("per-user oauth token not found for this identity and mcp server")
+	ErrOAuth2FlowNotPending            = errors.New("oauth flow is not in pending state")
+	ErrOAuth2FlowExpired               = errors.New("oauth flow has expired")
 	// ErrTokenExchangeUnavailable means delegated token exchange cannot run:
 	// no identity-provider integration with an exchange client is configured
 	// (nil TokenExchangeIdPResolver, or Available() == false).
@@ -882,6 +883,23 @@ func IsHTTPSOrLoopbackURL(raw string) bool {
 	return false
 }
 
+// ValidateOAuthRedirectURIOverride accepts public HTTPS callbacks and HTTP
+// loopback callbacks. It rejects URL features OAuth providers do not match
+// consistently and that are not useful for a redirect URI.
+func ValidateOAuthRedirectURIOverride(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > 2048 || strings.Contains(raw, "\\") {
+		return fmt.Errorf("%w: must be at most 2048 characters and contain no backslashes", ErrInvalidOAuthRedirectURIOverride)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.Fragment != "" || !IsHTTPSOrLoopbackURL(raw) {
+		return fmt.Errorf("%w: must be an HTTPS URL or an HTTP loopback URL without user info or a fragment", ErrInvalidOAuthRedirectURIOverride)
+	}
+	return nil
+}
+
 // DiffersFrom reports whether resolved's fields differ from c's, comparing
 // audience, client_id, client_secret, authorization_server_url, and scopes
 // (order-insensitive). Callers pass a fully-resolved value for resolved —
@@ -952,13 +970,14 @@ type MCPClientConfig struct {
 	// The remaining OAuth fields are populated on GET (not stored here) so the
 	// full oauth_config, not just client_id/client_secret, can be reviewed and
 	// edited without a separate lookup.
-	OauthAuthorizeURL    string               `json:"oauth_authorize_url,omitempty"`
-	OauthTokenURL        string               `json:"oauth_token_url,omitempty"`
-	OauthRegistrationURL string               `json:"oauth_registration_url,omitempty"`
-	OauthScopes          []string             `json:"oauth_scopes,omitempty"`
-	OauthResource        string               `json:"oauth_resource,omitempty"`
-	State                string               `json:"state,omitempty"`   // Connection state (connected, disconnected, error)
-	Headers              map[string]SecretVar `json:"headers,omitempty"` // Headers to send with the request (for headers auth type)
+	OauthAuthorizeURL        string               `json:"oauth_authorize_url,omitempty"`
+	OauthTokenURL            string               `json:"oauth_token_url,omitempty"`
+	OauthRegistrationURL     string               `json:"oauth_registration_url,omitempty"`
+	OauthScopes              []string             `json:"oauth_scopes,omitempty"`
+	OauthResource            string               `json:"oauth_resource,omitempty"`
+	OauthRedirectURIOverride string               `json:"oauth_redirect_uri_override,omitempty"`
+	State                    string               `json:"state,omitempty"`   // Connection state (connected, disconnected, error)
+	Headers                  map[string]SecretVar `json:"headers,omitempty"` // Headers to send with the request (for headers auth type)
 	// PerUserHeaderKeys lists the header *names* each caller must supply for
 	// MCPAuthTypePerUserHeaders clients. Admin-declared schema only — the
 	// values live per-user in the mcp_per_user_header_credentials table and

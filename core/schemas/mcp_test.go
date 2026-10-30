@@ -5,6 +5,7 @@ package schemas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -263,6 +264,31 @@ func TestMCPProtocolVersionsUpTo(t *testing.T) {
 		}
 		if MCPAllowsClientMetadataDocuments(tc.maxVersion) != tc.cimd {
 			t.Errorf("MCPAllowsClientMetadataDocuments(%q) = %v, want %v", tc.maxVersion, !tc.cimd, tc.cimd)
+		}
+	}
+}
+
+func TestValidateOAuthRedirectURIOverride(t *testing.T) {
+	for _, tc := range []struct {
+		uri   string
+		valid bool
+	}{
+		{"", true},
+		{"https://mcp.example.com/oauth/callback", true},
+		{"http://localhost:8765/api/oauth/callback", true},
+		{"http://127.0.0.1:8765/callback", true},
+		{"http://[::1]:8765/callback", true},
+		{"http://mcp.example.com/callback", false},
+		{"https://user:password@mcp.example.com/callback", false},
+		{"https://mcp.example.com/callback#fragment", false},
+		{"javascript:alert(1)", false},
+	} {
+		err := ValidateOAuthRedirectURIOverride(tc.uri)
+		if tc.valid && err != nil {
+			t.Errorf("%q rejected: %v", tc.uri, err)
+		}
+		if !tc.valid && !errors.Is(err, ErrInvalidOAuthRedirectURIOverride) {
+			t.Errorf("%q error = %v, want ErrInvalidOAuthRedirectURIOverride", tc.uri, err)
 		}
 	}
 }

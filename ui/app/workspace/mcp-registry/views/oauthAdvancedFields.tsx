@@ -85,6 +85,8 @@ export function OAuthAdvancedFields({
 }: OAuthAdvancedFieldsProps) {
 	const { t } = useTranslation("mcp");
 	const useClientMetadataDocument = useWatch({ control, name: "oauth_config.use_client_metadata_document" }) === true;
+	const redirectURIOverride = useWatch({ control, name: "oauth_config.redirect_uri_override" });
+	const hasRedirectURIOverride = typeof redirectURIOverride === "string" && redirectURIOverride.trim() !== "";
 	const credentialsDisabled = disabled || (clientMetadataDocumentTestId !== undefined && useClientMetadataDocument);
 	return (
 		<>
@@ -105,7 +107,7 @@ export function OAuthAdvancedFields({
 									data-testid={clientMetadataDocumentTestId}
 									checked={field.value === true}
 									onCheckedChange={field.onChange}
-									disabled={disabled}
+									disabled={disabled || hasRedirectURIOverride}
 								/>
 							</FormControl>
 						</FormItem>
@@ -233,6 +235,30 @@ export function OAuthAdvancedFields({
 									data-testid={registrationUrlTestId}
 								/>
 							</FormControl>
+							<FormMessage />
+						</FormItem>
+					)}
+				/>
+				<FormField
+					control={control}
+					name="oauth_config.redirect_uri_override"
+					render={({ field }) => (
+						<FormItem className="flex flex-col gap-2 md:col-span-2">
+							<FormLabel>Custom Redirect URI (optional)</FormLabel>
+							<FormControl>
+								<Input
+									{...field}
+									value={field.value ?? ""}
+									disabled={disabled || useClientMetadataDocument}
+									placeholder="http://localhost:8765/api/oauth/callback"
+									data-testid="mcp-oauth-redirect-uri-override"
+								/>
+							</FormControl>
+							<p className="text-muted-foreground text-xs">
+								Registers and sends this exact redirect_uri upstream. Use for providers that require a fixed loopback callback. After
+								consent, copy the returned code and state to Bifrost&apos;s public /api/oauth/callback URL. This disables client metadata
+								documents and uses dynamic registration when no client ID is set.
+							</p>
 							<FormMessage />
 						</FormItem>
 					)}

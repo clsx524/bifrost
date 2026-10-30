@@ -78,7 +78,7 @@ func (t *ToolsManager) ExecuteAgentForChatStream(
 	if ctx == nil || req == nil || stream == nil || startStream == nil || executeTool == nil {
 		return stream
 	}
-	if !t.hasAutoExecutableTools(req) {
+	if !t.hasAutoExecutableTools(ctx, req) {
 		return stream
 	}
 	out := make(chan *schemas.BifrostStreamChunk)
@@ -279,7 +279,7 @@ func reassembleChatToolCalls(held []*schemas.BifrostStreamChunk) []schemas.ChatA
 
 // hasAutoExecutableTools reports whether the request carries any tool Bifrost would run itself.
 // Streams without one skip the relay and keep the provider's channel untouched.
-func (t *ToolsManager) hasAutoExecutableTools(req *schemas.BifrostChatRequest) bool {
+func (t *ToolsManager) hasAutoExecutableTools(ctx *schemas.BifrostContext, req *schemas.BifrostChatRequest) bool {
 	if req == nil || req.Params == nil {
 		return false
 	}
@@ -292,7 +292,11 @@ func (t *ToolsManager) hasAutoExecutableTools(req *schemas.BifrostChatRequest) b
 			name == ToolTypeGetToolDocs || name == ToolTypeExecuteToolCode {
 			return true
 		}
-		if client := t.clientManager.GetClientForTool(name); client != nil && CanAutoExecuteTool(name, client.ExecutionConfig) {
+		client, _ := t.clientManager.GetClientForTool(ctx, name)
+		if client != nil && CanAutoExecuteTool(name, client.ExecutionConfig) {
+			return true
+		}
+		if client == nil && t.clientManager.ConnectToolClient(ctx, name) != nil {
 			return true
 		}
 	}

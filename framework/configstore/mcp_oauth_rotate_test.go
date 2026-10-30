@@ -105,6 +105,27 @@ func TestRotateMCPOAuthConfig_ChangedCredentialsCascadesAllAuthModes(t *testing.
 	assert.Equal(t, "needs_reauth", tokenStatus(t, s, "tok-user"), "user-mode token must be cascaded too, since rotation has no auth_mode filter")
 }
 
+func TestRotateMCPOAuthConfig_ClearsRedirectURIOverride(t *testing.T) {
+	s := setupRDBTestStore(t)
+	ctx := context.Background()
+	cfg := seedRotateOauthConfig(t, s, "cfg-redirect", "client-id", "client-secret")
+	cfg.RedirectURIOverride = "http://localhost:8765/api/oauth/callback"
+	require.NoError(t, s.UpdateOauthConfig(ctx, cfg))
+	seedRotateToken(t, s, "tok-redirect", cfg.ID, "shared", "active")
+
+	fields := baseRotateFields("client-id", "client-secret")
+	fields.SetRedirectURIOverride = true
+	fields.RedirectURIOverride = ""
+	rotated, err := s.RotateMCPOAuthConfig(ctx, cfg, fields)
+	require.NoError(t, err)
+	require.True(t, rotated)
+
+	stored, err := s.GetOauthConfigByID(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.Empty(t, stored.RedirectURIOverride)
+	assert.Equal(t, "needs_reauth", tokenStatus(t, s, "tok-redirect"))
+}
+
 // TestRotateMCPOAuthConfig_ExpectedClientIDClaimsTheRow: with ExpectedClientID set, a rotation from a
 // copy loaded before another caller rotated the row is refused with ErrOAuthConfigChanged and writes
 // nothing, so it cannot sign out the token issued after the first rotation.

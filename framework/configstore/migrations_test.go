@@ -6068,3 +6068,24 @@ func TestMigrationAddModelRoutersTable(t *testing.T) {
 	require.NoError(t, migrationAddModelRoutersTable(context.Background(), db, testMigrationLogger), "it runs once")
 	require.True(t, db.Migrator().HasTable(&tables.TableModelRouter{}))
 }
+
+func TestMigrationAddOAuthRedirectURIOverrideColumn(t *testing.T) {
+	db := setupRDBTestStore(t).DB()
+	ctx := context.Background()
+	require.NoError(t, db.Create(&tables.TableOauthConfig{
+		ID:           "legacy-oauth-config",
+		AuthorizeURL: "https://auth.example.com/authorize",
+		TokenURL:     "https://auth.example.com/token",
+		RedirectURI:  "https://bifrost.example.com/api/oauth/callback",
+		Status:       "authorized",
+	}).Error)
+	require.NoError(t, db.Migrator().DropColumn(&tables.TableOauthConfig{}, "redirect_uri_override"))
+	require.False(t, db.Migrator().HasColumn(&tables.TableOauthConfig{}, "redirect_uri_override"))
+	require.NoError(t, db.Exec("DELETE FROM migrations WHERE id = ?", "add_oauth_redirect_uri_override_column").Error)
+
+	require.NoError(t, migrationAddOAuthRedirectURIOverrideColumn(ctx, db, testMigrationLogger))
+	require.True(t, db.Migrator().HasColumn(&tables.TableOauthConfig{}, "redirect_uri_override"))
+	var stored tables.TableOauthConfig
+	require.NoError(t, db.First(&stored, "id = ?", "legacy-oauth-config").Error)
+	require.Empty(t, stored.RedirectURIOverride)
+}

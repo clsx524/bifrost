@@ -431,15 +431,16 @@ func (h *OAuthHandler) revokeOAuthConfig(ctx *fasthttp.RequestCtx) {
 
 // OAuthInitiationRequest represents the request to initiate an OAuth flow
 type OAuthInitiationRequest struct {
-	ClientID        *schemas.SecretVar `json:"client_id"`
-	ClientSecret    *schemas.SecretVar `json:"client_secret"`
-	AuthorizeURL    string             `json:"authorize_url"`
-	TokenURL        string             `json:"token_url"`
-	RegistrationURL string             `json:"registration_url"`
-	RedirectURI     string             `json:"redirect_uri"`
-	Scopes          []string           `json:"scopes"`
-	ServerURL       string             `json:"server_url"` // For OAuth discovery
-	Resource        string             `json:"resource"`   // OAuth resource indicator (RFC 8707)
+	ClientID            *schemas.SecretVar `json:"client_id"`
+	ClientSecret        *schemas.SecretVar `json:"client_secret"`
+	AuthorizeURL        string             `json:"authorize_url"`
+	TokenURL            string             `json:"token_url"`
+	RegistrationURL     string             `json:"registration_url"`
+	RedirectURI         string             `json:"redirect_uri"`
+	RedirectURIOverride string             `json:"redirect_uri_override"`
+	Scopes              []string           `json:"scopes"`
+	ServerURL           string             `json:"server_url"` // For OAuth discovery
+	Resource            string             `json:"resource"`   // OAuth resource indicator (RFC 8707)
 
 	RequirePublicTarget       bool   `json:"-"` // Server-set from the MCP client: OAuth requests may reach only public addresses
 	ClientMetadataURL         string `json:"-"` // Server-set: Bifrost's Client ID Metadata Document URL
@@ -455,15 +456,16 @@ func (h *OAuthHandler) InitiateOAuthFlow(ctx context.Context, req OAuthInitiatio
 	}
 
 	config := &schemas.OAuth2Config{
-		ClientID:        req.ClientID,
-		ClientSecret:    req.ClientSecret,
-		AuthorizeURL:    req.AuthorizeURL,
-		TokenURL:        req.TokenURL,
-		RegistrationURL: registrationURL,
-		RedirectURI:     req.RedirectURI,
-		Scopes:          req.Scopes,
-		ServerURL:       req.ServerURL,
-		Resource:        req.Resource,
+		ClientID:            req.ClientID,
+		ClientSecret:        req.ClientSecret,
+		AuthorizeURL:        req.AuthorizeURL,
+		TokenURL:            req.TokenURL,
+		RegistrationURL:     registrationURL,
+		RedirectURI:         req.RedirectURI,
+		RedirectURIOverride: req.RedirectURIOverride,
+		Scopes:              req.Scopes,
+		ServerURL:           req.ServerURL,
+		Resource:            req.Resource,
 
 		RequirePublicTarget:       req.RequirePublicTarget,
 		ClientMetadataURL:         req.ClientMetadataURL,

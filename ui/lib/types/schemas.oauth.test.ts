@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modelProviderKeySchema, oauthKeyConfigComplete, oauthKeyConfigSchema } from "./schemas";
+import { isValidOAuthRedirectURIOverride, modelProviderKeySchema, oauthKeyConfigComplete, oauthKeyConfigSchema } from "./schemas";
 
 const tokenUrl = { value: "https://idp.example.com/oauth2/token" };
 const pair = { client_id: { value: "client-id" }, client_secret: { value: "client-secret" } };
@@ -236,5 +236,25 @@ describe("modelProviderKeySchema with oauth_key_config", () => {
 		if (!result.success) return;
 		expect(result.data.oauth_key_config?.client_secret?.value).toBe("client-secret");
 		expect(result.data.oauth_key_config?.scopes).toEqual(["inference"]);
+	});
+});
+
+describe("isValidOAuthRedirectURIOverride", () => {
+	it("accepts HTTPS and HTTP loopback callbacks only", () => {
+		for (const url of [
+			"https://bifrost.example.com/api/oauth/callback",
+			"http://localhost:8765/api/oauth/callback",
+			"http://127.0.0.2:8765/callback",
+			"http://[::1]:8765/callback",
+		]) {
+			expect(isValidOAuthRedirectURIOverride(url), url).toBe(true);
+		}
+		for (const url of [
+			"http://bifrost.example.com/callback",
+			"https://user:password@bifrost.example.com/callback",
+			"https://bifrost.example.com/callback#fragment",
+		]) {
+			expect(isValidOAuthRedirectURIOverride(url), url).toBe(false);
+		}
 	});
 });

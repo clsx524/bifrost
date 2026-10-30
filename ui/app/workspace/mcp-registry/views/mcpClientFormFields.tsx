@@ -25,6 +25,7 @@ import {
 	hasPrivateKeySettingsWithoutKey,
 	hasSendMethodWithoutSecret,
 	isHTTPSOrLoopbackURL,
+	isValidOAuthRedirectURIOverride,
 	isSecretVarSet,
 	mcpOpenAPIConfigSchema,
 	privateKeyRequiredMessage,
@@ -371,6 +372,17 @@ export function validateMCPClientForm({
 		}
 		if (data.oauth_config?.registration_url && !/^https?:\/\/.+$/.test(data.oauth_config.registration_url)) {
 			setError("oauth_config.registration_url", { message: i18n.t("registry.form.registrationUrlHttp", { ns: "mcp" }) });
+			hasErrors = true;
+		}
+		const redirectURIOverride = data.oauth_config?.redirect_uri_override?.trim();
+		if (redirectURIOverride && !isValidOAuthRedirectURIOverride(redirectURIOverride)) {
+			setError("oauth_config.redirect_uri_override", {
+				message: "Redirect URI must be HTTPS or an HTTP localhost/loopback URL without user info or a fragment",
+			});
+			hasErrors = true;
+		}
+		if (redirectURIOverride && data.oauth_config?.use_client_metadata_document) {
+			setError("oauth_config.redirect_uri_override", { message: "Custom redirect URI cannot be combined with a client metadata document" });
 			hasErrors = true;
 		}
 		if (satellites.resourceText.trim() && !isValidOAuthResourceURI(satellites.resourceText.trim())) {

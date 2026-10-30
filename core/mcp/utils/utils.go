@@ -51,6 +51,15 @@ func BuildOAuthRedirectURIFromContext(ctx *schemas.BifrostContext) string {
 	return base + "/api/oauth/callback"
 }
 
+// ResolveOAuthRedirectURI returns the exact redirect URI to register and send
+// upstream. Empty overrides preserve the deployment-derived callback.
+func ResolveOAuthRedirectURI(defaultURI, override string) string {
+	if override = strings.TrimSpace(override); override != "" {
+		return override
+	}
+	return defaultURI
+}
+
 // StaticConfigHeaders returns the admin-configured static headers from
 // config.Headers MINUS any header whose name is a credential — Authorization
 // always, plus any name declared in config.PerUserHeaderKeys. These are the

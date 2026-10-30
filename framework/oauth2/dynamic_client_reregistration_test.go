@@ -279,7 +279,8 @@ type evictableAuthServer struct {
 	known         map[string]bool
 	// redirectURIs is what each issued client was registered with, which is
 	// what a real authorization server checks an authorize request against.
-	redirectURIs map[string][]string
+	redirectURIs      map[string][]string
+	tokenRedirectURIs []string
 	// refuseWith, when non-zero, makes /register answer with that status
 	// instead of issuing a client.
 	refuseWith int
@@ -323,8 +324,10 @@ func newEvictableAuthServer(t *testing.T) *evictableAuthServer {
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		clientID := r.PostFormValue("client_id")
+		redirectURI := r.PostFormValue("redirect_uri")
 		as.mu.Lock()
 		recognised := as.known[clientID]
+		as.tokenRedirectURIs = append(as.tokenRedirectURIs, redirectURI)
 		as.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if !recognised {
@@ -366,6 +369,15 @@ func (as *evictableAuthServer) redirectURIsFor(clientID string) []string {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	return as.redirectURIs[clientID]
+}
+
+func (as *evictableAuthServer) lastTokenRedirectURI() string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	if len(as.tokenRedirectURIs) == 0 {
+		return ""
+	}
+	return as.tokenRedirectURIs[len(as.tokenRedirectURIs)-1]
 }
 
 // refuseRegistrations makes every later /register answer with status.
@@ -440,6 +452,65 @@ func dcrFixture(t *testing.T, as *evictableAuthServer, store *dcrConfigStore, pr
 	}).Error)
 
 	return initiation.OauthConfigID, registeredClientID
+}
+
+func TestOAuthRedirectURIOverride_DCRAuthorizeAndTokenExchangeUseExactURI(t *testing.T) {
+	as := newEvictableAuthServer(t)
+	provider, store := newDCRProvider(t)
+	ctx := context.WithValue(context.Background(), schemas.BifrostContextKeyMCPCallbackBaseURL, "https://mcp.clsx524.page")
+	const redirectURIOverride = "http://localhost:8765/api/oauth/callback"
+
+	initiation, err := provider.InitiateOAuthFlow(ctx, &schemas.OAuth2Config{
+		AuthorizeURL:        as.server.URL + "/authorize",
+		TokenURL:            as.server.URL + "/token",
+		RegistrationURL:     bifrost.Ptr(as.server.URL + "/register"),
+		RedirectURI:         redirectURIOverride,
+		RedirectURIOverride: redirectURIOverride,
+		ServerURL:           as.server.URL,
+		Scopes:              []string{"internal"},
+	})
+	require.NoError(t, err)
+
+	stored, err := store.GetOauthConfigByID(ctx, initiation.OauthConfigID)
+	require.NoError(t, err)
+	require.Equal(t, redirectURIOverride, stored.RedirectURIOverride)
+	require.Equal(t, []string{redirectURIOverride}, as.redirectURIsFor(stored.GetResolvedClientID()))
+
+	initialAuthorizeURL, err := url.Parse(initiation.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, redirectURIOverride, initialAuthorizeURL.Query().Get("redirect_uri"))
+
+	userInitiation, flowID, err := provider.InitiateUserOAuthFlow(
+		ctx,
+		initiation.OauthConfigID,
+		dcrMCPClientID,
+		"https://mcp.clsx524.page/api/oauth/callback",
+		schemas.MCPAuthModeAdmin,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "https://mcp.clsx524.page/workspace/mcp-sessions/auth?flow="+flowID, userInitiation.AuthorizeURL)
+
+	userAuthorizeURL, err := provider.BuildAdminUpstreamAuthorizeURL(ctx, flowID)
+	require.NoError(t, err)
+	parsedUserAuthorizeURL, err := url.Parse(userAuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, redirectURIOverride, parsedUserAuthorizeURL.Query().Get("redirect_uri"))
+
+	var storedFlow tables.TableMCPOauthFlow
+	require.NoError(t, store.db.First(&storedFlow, "id = ?", flowID).Error)
+	require.Equal(t, redirectURIOverride, storedFlow.RedirectURI)
+	_, err = provider.exchangeCodeForTokensWithPKCE(
+		ctx,
+		stored.TokenURL,
+		"authorization-code",
+		stored.GetResolvedClientID(),
+		stored.GetResolvedClientSecret(),
+		storedFlow.RedirectURI,
+		storedFlow.CodeVerifier,
+		stored.Resource,
+	)
+	require.NoError(t, err)
+	require.Equal(t, redirectURIOverride, as.lastTokenRedirectURI())
 }
 
 // reauthorize runs what POST /api/mcp/client/{id}/reauthorize runs: an

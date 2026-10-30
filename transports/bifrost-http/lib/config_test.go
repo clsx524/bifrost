@@ -20329,25 +20329,26 @@ var excludedGoFields = map[string]map[string]bool{
 		"tool_sync_interval": true, // Internal
 	},
 	"schemas.MCPClientConfig": {
-		"oauth_authorize_url":    true, // Populated on GET from oauth_config; not read from config.json
-		"oauth_token_url":        true, // Populated on GET from oauth_config; not read from config.json
-		"oauth_registration_url": true, // Populated on GET from oauth_config; not read from config.json
-		"oauth_scopes":           true, // Populated on GET from oauth_config; not read from config.json
-		"oauth_resource":         true, // Populated on GET from oauth_config; not read from config.json
-		"client_id":              true, // Internal ID
-		"state":                  true, // Runtime state
-		"is_code_mode_client":    true, // Internal
-		"auth_type":              true, // Internal
-		"oauth_config_id":        true, // Internal
-		"oauth_client_id":        true, // Response-only: populated on GET from oauth config, not stored
-		"oauth_client_secret":    true, // Response-only: populated on GET from oauth config, not stored
-		"is_ping_available":      true, // Runtime state
-		"tool_sync_interval":     true, // Internal
-		"tool_pricing":           true, // Internal
-		"tools_to_auto_execute":  true, // Internal
-		"tools_to_execute":       true, // Moved to VK MCP config
-		"connection_string":      true, // Use specific config types instead
-		"headers":                true, // Internal
+		"oauth_authorize_url":         true, // Populated on GET from oauth_config; not read from config.json
+		"oauth_token_url":             true, // Populated on GET from oauth_config; not read from config.json
+		"oauth_registration_url":      true, // Populated on GET from oauth_config; not read from config.json
+		"oauth_scopes":                true, // Populated on GET from oauth_config; not read from config.json
+		"oauth_resource":              true, // Populated on GET from oauth_config; not read from config.json
+		"oauth_redirect_uri_override": true, // Populated on GET from oauth_config; authored inside inline oauth_config
+		"client_id":                   true, // Internal ID
+		"state":                       true, // Runtime state
+		"is_code_mode_client":         true, // Internal
+		"auth_type":                   true, // Internal
+		"oauth_config_id":             true, // Internal
+		"oauth_client_id":             true, // Response-only: populated on GET from oauth config, not stored
+		"oauth_client_secret":         true, // Response-only: populated on GET from oauth config, not stored
+		"is_ping_available":           true, // Runtime state
+		"tool_sync_interval":          true, // Internal
+		"tool_pricing":                true, // Internal
+		"tools_to_auto_execute":       true, // Internal
+		"tools_to_execute":            true, // Moved to VK MCP config
+		"connection_string":           true, // Use specific config types instead
+		"headers":                     true, // Internal
 	},
 	"schemas.MCPToolManagerConfig": {
 		"code_mode_binding_level": true, // Internal

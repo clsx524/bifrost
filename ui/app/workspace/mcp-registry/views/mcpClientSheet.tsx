@@ -1,5 +1,7 @@
+import { getExternalBaseUrl } from "@/app/workspace/mcp-registry/views/mcpUsageGuide/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CodeEditor } from "@/components/ui/codeEditor";
 
 import { VirtualKeySelector } from "@/components/entitySelectors/virtualKeySelector";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -14,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TriStateCheckbox } from "@/components/ui/tristateCheckbox";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { useToast } from "@/hooks/use-toast";
 import { IS_ENTERPRISE, MCP_STATUS_COLORS } from "@/lib/constants/config";
 import {
@@ -36,8 +39,8 @@ import { titleCaseFromSnakeCase } from "@/lib/utils/strings";
 import { RbacOperation, RbacResource, useRbac } from "@enterprise/lib";
 import { useGetSCIMProvidersQuery } from "@enterprise/lib/store/apis/scimApi";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Info, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, ChevronRight, Copy, Info, Plus, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -113,6 +116,8 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 	const globalMaxProtocolVersion = bifrostConfig?.client_config?.mcp_max_protocol_version || "auto";
 	const globalToolExecutionTimeout = bifrostConfig?.client_config?.mcp_tool_execution_timeout ?? 30;
 	const globalMaxInstructionsLength = bifrostConfig?.client_config?.mcp_max_instructions_per_client || 4096;
+	const baseUrl = getExternalBaseUrl(bifrostConfig?.client_config);
+	const { copy: copyEndpoint, copied: endpointCopied } = useCopyToClipboard({ successMessage: "Endpoint copied" });
 
 	const allToolNames = useMemo(() => mcpClient.tools?.map((t) => t.name) ?? [], [mcpClient.tools]);
 	const promptItems = useMemo(() => promptExposeItems(mcpClient), [mcpClient]);
@@ -200,6 +205,7 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 	);
 	const [replaceCredentialsDirty, setReplaceCredentialsDirty] = useState(false);
 	const [replaceSelection, setReplaceSelection] = useState<string[]>([]);
+	const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
 	const [previewOpenAPISpec, { isLoading: isParsingReplaceSpec }] = usePreviewOpenAPISpecMutation();
 	// Its own instance, so the background baseline preview never shows Parse as busy.
 	const [previewStoredOpenAPISpec, { isLoading: isPreviewingStoredSpec }] = usePreviewOpenAPISpecMutation();
@@ -376,6 +382,18 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 		setVKConfigsDirty(true);
 	};
 
+	const toggleToolExpanded = (toolName: string) => {
+		setExpandedTools((prev) => {
+			const next = new Set(prev);
+			if (next.has(toolName)) {
+				next.delete(toolName);
+			} else {
+				next.add(toolName);
+			}
+			return next;
+		});
+	};
+
 	const form = useForm<MCPClientUpdateSchema>({
 		resolver: zodResolver(mcpClientUpdateSchema),
 		mode: "onBlur",
@@ -408,6 +426,7 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 						token_url: mcpClient.config.oauth_token_url,
 						registration_url: mcpClient.config.oauth_registration_url,
 						resource: mcpClient.config.oauth_resource,
+						redirect_uri_override: mcpClient.config.oauth_redirect_uri_override,
 					}
 				: undefined,
 			// Unlike oauth_config, token_exchange is replaced wholesale server-side
@@ -491,6 +510,7 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 						token_url: mcpClient.config.oauth_token_url,
 						registration_url: mcpClient.config.oauth_registration_url,
 						resource: mcpClient.config.oauth_resource,
+						redirect_uri_override: mcpClient.config.oauth_redirect_uri_override,
 					}
 				: undefined,
 			// Unlike oauth_config, token_exchange is replaced wholesale server-side
@@ -544,6 +564,7 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 		form.formState.dirtyFields.oauth_config?.token_url ||
 		form.formState.dirtyFields.oauth_config?.registration_url ||
 		form.formState.dirtyFields.oauth_config?.resource ||
+		form.formState.dirtyFields.oauth_config?.redirect_uri_override ||
 		oauthScopesDirty
 	);
 	// Same rationale as oauthCredentialsDirty: any touched token_exchange
@@ -750,6 +771,9 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 								registration_url: data.oauth_config?.registration_url || undefined,
 								scopes: oauthScopes,
 								resource: data.oauth_config?.resource || undefined,
+								redirect_uri_override: form.formState.dirtyFields.oauth_config?.redirect_uri_override
+									? data.oauth_config?.redirect_uri_override?.trim() || ""
+									: undefined,
 							}
 						: undefined,
 					token_exchange: shouldUpdateTokenExchange
@@ -973,6 +997,42 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 													</FormItem>
 												)}
 											/>
+											{/* Read-only connection summary. Connection type and target
+										    can't be changed after create — surface them here for
+										    visibility without exposing edit controls. */}
+											<div className="flex flex-col gap-2">
+												{/* An OpenAPI server is generated, not connected to: its summary
+												    names the source and the API it calls, not a transport. */}
+												<div className="text-sm font-medium">{isOpenAPIClient ? "Server source" : "Connection"}</div>
+												<div
+													className="bg-muted/40 text-muted-foreground rounded-md border px-3 py-2 text-sm"
+													data-testid="mcp-client-sheet-connection-summary"
+												>
+													{isOpenAPIClient ? (
+														<span className="text-foreground text-xs">Generated from an OpenAPI spec</span>
+													) : (
+														<span className="text-foreground font-mono text-xs uppercase">
+															{mcpClient.config.connection_type === "stdio"
+																? "STDIO"
+																: mcpClient.config.connection_type === "sse"
+																	? "SSE"
+																	: "HTTP"}
+														</span>
+													)}
+													<span className="mx-2">·</span>
+													{isOpenAPIClient && <span className="mr-1">calls</span>}
+													<span className="font-mono break-all">
+														{mcpClient.config.connection_type === "stdio"
+															? `${mcpClient.config.stdio_config?.command ?? ""} ${(mcpClient.config.stdio_config?.args ?? []).join(" ")}`.trim() ||
+																"-"
+															: mcpClient.config.connection_type === "openapi"
+																? mcpClient.config.openapi_config?.base_url || "base URL from the document's servers"
+																: mcpClient.config.connection_string?.type === "env" || mcpClient.config.connection_string?.type === "vault"
+																	? mcpClient.config.connection_string.ref
+																	: mcpClient.config.connection_string?.value || "-"}
+													</span>
+												</div>
+											</div>
 											{isOpenAPIClient && (
 												<div className="space-y-3" data-testid="mcp-client-sheet-openapi-section">
 													<div className="flex items-start justify-between gap-3">
@@ -1069,6 +1129,43 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 													)}
 												</div>
 											)}
+											{mcpClient.config.endpoint_slug && (
+												<div className="flex flex-col gap-2">
+													<div className="text-sm font-medium">Endpoint</div>
+													<div className="bg-muted/40 text-muted-foreground flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
+														<span className="font-mono break-all">/mcp/{mcpClient.config.endpoint_slug}</span>
+														<button
+															type="button"
+															onClick={() => copyEndpoint(`${baseUrl}/mcp/${mcpClient.config.endpoint_slug}`)}
+															className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+															aria-label="Copy endpoint URL"
+															data-testid={`mcp-client-sheet-endpoint-copy-${mcpClient.config.endpoint_slug}`}
+														>
+															{endpointCopied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+														</button>
+													</div>
+												</div>
+											)}
+											{mcpClient.config.connection_type === "stdio" &&
+												mcpClient.config.stdio_config?.envs &&
+												mcpClient.config.stdio_config.envs.length > 0 && (
+													<div className="space-y-2">
+														<div className="text-sm font-medium">Environment Variables</div>
+														<HeadersTable
+															value={Object.fromEntries(
+																mcpClient.config.stdio_config.envs.map((env) => {
+																	const [name, ...valueParts] = env.split("=");
+																	return [name, valueParts.join("=")];
+																}),
+															)}
+															onChange={() => {}}
+															fixedKeys={mcpClient.config.stdio_config.envs.map((env) => env.split("=")[0])}
+															valuePlaceholder="—"
+															label=""
+															disabled
+														/>
+													</div>
+												)}
 										</div>
 
 										<DottedSeparator />
@@ -1864,117 +1961,180 @@ export default function MCPClientSheet({ mcpClient, onClose, onSubmitSuccess }: 
 															</TableRow>
 														</TableHeader>
 														<TableBody>
-															{mcpClient.tools.map((tool) => {
+															{mcpClient.tools.map((tool, index) => {
 																const currentTools = form.watch("tools_to_execute") || [];
 																const currentAutoExecute = form.watch("tools_to_auto_execute") || [];
 																const isToolEnabled = currentTools?.includes("*") || currentTools?.includes(tool.name);
 																const isAutoExecuteEnabled =
 																	(currentAutoExecute?.includes("*") && isToolEnabled) ||
 																	(currentAutoExecute?.includes(tool.name) && isToolEnabled);
+																const isExpanded = expandedTools.has(tool.name);
 
 																return (
-																	<TableRow key={tool.name} className="group">
-																		<TableCell className="max-w-[300px]">
-																			<div className="flex min-w-0 items-start gap-2">
-																				<MCPToolIconImage tool={tool} />
-																				<div className="min-w-0">
-																					<div
-																						className="text-foreground truncate text-sm font-medium"
-																						data-testid={`mcp-tool-title-${tool.name}`}
-																					>
-																						{tool.title || tool.annotations?.title || tool.name}
-																					</div>
-																					{(tool.title || tool.annotations?.title) &&
-																						(tool.title || tool.annotations?.title) !== tool.name && (
-																							<div className="text-muted-foreground truncate font-mono text-xs">{tool.name}</div>
+																	<Fragment key={index}>
+																		<TableRow className="group">
+																			<TableCell className="p-2">
+																				<button
+																					type="button"
+																					className="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+																					onClick={() => toggleToolExpanded(tool.name)}
+																					data-testid={`mcp-tool-expand-${tool.name}`}
+																				>
+																					{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+																				</button>
+																			</TableCell>
+																			<TableCell className="max-w-[300px]">
+																				<div className="flex min-w-0 items-start gap-2">
+																					<MCPToolIconImage tool={tool} />
+																					<div className="min-w-0">
+																						<div
+																							className="text-foreground truncate text-sm font-medium"
+																							data-testid={`mcp-tool-title-${tool.name}`}
+																						>
+																							{tool.title || tool.annotations?.title || tool.name}
+																						</div>
+																						{(tool.title || tool.annotations?.title) &&
+																							(tool.title || tool.annotations?.title) !== tool.name && (
+																								<div className="text-muted-foreground truncate font-mono text-xs">{tool.name}</div>
+																							)}
+																						{toolSubtitle(mcpClient, tool) && (
+																							<p className="text-muted-foreground mt-0.5 truncate text-xs">
+																								{toolSubtitle(mcpClient, tool)}
+																							</p>
 																						)}
-																					{toolSubtitle(mcpClient, tool) && (
-																						<p className="text-muted-foreground mt-0.5 truncate text-xs">{toolSubtitle(mcpClient, tool)}</p>
-																					)}
+																					</div>
 																				</div>
-																			</div>
-																		</TableCell>
-																		<TableCell className="text-center">
-																			<FormField
-																				control={form.control}
-																				name="tools_to_execute"
-																				render={() => (
-																					<FormItem>
-																						<FormControl>
-																							<div className="flex h-11 w-11 items-center justify-center">
-																								<Switch
-																									size="md"
-																									checked={isToolEnabled}
-																									aria-label={
-																										isToolEnabled
-																											? t("registry.sheet.disableToolAria", { name: tool.name })
-																											: t("registry.sheet.enableToolAria", { name: tool.name })
-																									}
-																									onCheckedChange={(checked) => handleToolToggle(tool.name, checked)}
-																								/>
-																							</div>
-																						</FormControl>
-																					</FormItem>
-																				)}
-																			/>
-																		</TableCell>
-																		<TableCell className="text-center">
-																			<FormField
-																				control={form.control}
-																				name="tools_to_auto_execute"
-																				render={() => (
-																					<FormItem>
-																						<FormControl>
-																							<div className="flex h-11 w-11 items-center justify-center">
-																								<Switch
-																									size="md"
-																									checked={isAutoExecuteEnabled}
+																			</TableCell>
+																			<TableCell className="text-center">
+																				<FormField
+																					control={form.control}
+																					name="tools_to_execute"
+																					render={() => (
+																						<FormItem>
+																							<FormControl>
+																								<div className="flex h-11 w-11 items-center justify-center">
+																									<Switch
+																										size="md"
+																										checked={isToolEnabled}
+																										aria-label={
+																											isToolEnabled
+																												? t("registry.sheet.disableToolAria", { name: tool.name })
+																												: t("registry.sheet.enableToolAria", { name: tool.name })
+																										}
+																										onCheckedChange={(checked) => handleToolToggle(tool.name, checked)}
+																									/>
+																								</div>
+																							</FormControl>
+																						</FormItem>
+																					)}
+																				/>
+																			</TableCell>
+																			<TableCell className="text-center">
+																				<FormField
+																					control={form.control}
+																					name="tools_to_auto_execute"
+																					render={() => (
+																						<FormItem>
+																							<FormControl>
+																								<div className="flex h-11 w-11 items-center justify-center">
+																									<Switch
+																										size="md"
+																										checked={isAutoExecuteEnabled}
+																										disabled={!isToolEnabled}
+																										aria-label={
+																											isAutoExecuteEnabled
+																												? t("registry.sheet.disableAutoExecuteAria", { name: tool.name })
+																												: t("registry.sheet.enableAutoExecuteAria", { name: tool.name })
+																										}
+																										onCheckedChange={(checked) => handleAutoExecuteToggle(tool.name, checked)}
+																									/>
+																								</div>
+																							</FormControl>
+																						</FormItem>
+																					)}
+																				/>
+																			</TableCell>
+																			<TableCell className="text-center">
+																				<FormField
+																					control={form.control}
+																					name="tool_pricing"
+																					render={({ field }) => (
+																						<FormItem>
+																							<FormControl>
+																								<Input
+																									type="number"
+																									step="0.000001"
+																									min="0"
+																									placeholder={t("registry.sheet.costPlaceholder")}
+																									className="h-8 w-24"
 																									disabled={!isToolEnabled}
-																									aria-label={
-																										isAutoExecuteEnabled
-																											? t("registry.sheet.disableAutoExecuteAria", { name: tool.name })
-																											: t("registry.sheet.enableAutoExecuteAria", { name: tool.name })
-																									}
-																									onCheckedChange={(checked) => handleAutoExecuteToggle(tool.name, checked)}
+																									value={field.value?.[tool.name] ?? ""}
+																									onChange={(e) => {
+																										const value = e.target.value === "" ? undefined : parseFloat(e.target.value);
+																										const newPricing = { ...field.value };
+																										if (value === undefined || isNaN(value)) {
+																											delete newPricing[tool.name];
+																										} else {
+																											newPricing[tool.name] = value;
+																										}
+																										field.onChange(newPricing);
+																									}}
 																								/>
-																							</div>
-																						</FormControl>
-																					</FormItem>
-																				)}
-																			/>
-																		</TableCell>
-																		<TableCell className="text-center">
-																			<FormField
-																				control={form.control}
-																				name="tool_pricing"
-																				render={({ field }) => (
-																					<FormItem>
-																						<FormControl>
-																							<Input
-																								type="number"
-																								step="0.000001"
-																								min="0"
-																								placeholder={t("registry.sheet.costPlaceholder")}
-																								className="h-8 w-24"
-																								disabled={!isToolEnabled}
-																								value={field.value?.[tool.name] ?? ""}
-																								onChange={(e) => {
-																									const value = e.target.value === "" ? undefined : parseFloat(e.target.value);
-																									const newPricing = { ...field.value };
-																									if (value === undefined || isNaN(value)) {
-																										delete newPricing[tool.name];
-																									} else {
-																										newPricing[tool.name] = value;
-																									}
-																									field.onChange(newPricing);
+																							</FormControl>
+																						</FormItem>
+																					)}
+																				/>
+																			</TableCell>
+																		</TableRow>
+																		{isExpanded && (
+																			<tr>
+																				<td colSpan={5} className="p-0">
+																					<div className="bg-muted/30 border-b px-4 py-3">
+																						<div className="text-muted-foreground mb-2 text-xs font-medium">Parameters Schema</div>
+																						{tool.parameters ? (
+																							<CodeEditor
+																								className="z-0 w-full rounded-sm border"
+																								shouldAdjustInitialHeight={true}
+																								maxHeight={300}
+																								wrap={true}
+																								code={JSON.stringify(tool.parameters, null, 2)}
+																								lang="json"
+																								readonly={true}
+																								options={{
+																									scrollBeyondLastLine: false,
+																									collapsibleBlocks: true,
+																									lineNumbers: "off",
+																									alwaysConsumeMouseWheel: false,
 																								}}
 																							/>
-																						</FormControl>
-																					</FormItem>
-																				)}
-																			/>
-																		</TableCell>
-																	</TableRow>
+																						) : (
+																							<div className="text-muted-foreground text-sm">No parameters defined</div>
+																						)}
+																						{tool.output_schema && (
+																							<div data-testid={`mcp-tool-output-schema-${tool.name}`}>
+																								<div className="text-muted-foreground mt-3 mb-2 text-xs font-medium">Output Schema</div>
+																								<CodeEditor
+																									className="z-0 w-full rounded-sm border"
+																									shouldAdjustInitialHeight={true}
+																									maxHeight={300}
+																									wrap={true}
+																									code={JSON.stringify(tool.output_schema, null, 2)}
+																									lang="json"
+																									readonly={true}
+																									options={{
+																										scrollBeyondLastLine: false,
+																										collapsibleBlocks: true,
+																										lineNumbers: "off",
+																										alwaysConsumeMouseWheel: false,
+																									}}
+																								/>
+																							</div>
+																						)}
+																					</div>
+																				</td>
+																			</tr>
+																		)}
+																	</Fragment>
 																);
 															})}
 														</TableBody>

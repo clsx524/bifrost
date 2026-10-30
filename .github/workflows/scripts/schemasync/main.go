@@ -155,18 +155,20 @@ var ignoreGoFields = map[string]string{
 	// oauth_resource are the remaining response-only OAuth fields on MCPClientConfig:
 	// populated on GET (not stored here) so the full oauth_config can be reviewed/edited,
 	// never accepted as config.json input. Inline OAuth input goes through oauth_config.
-	"/properties/mcp/properties/client_configs/items|oauth_authorize_url":    "response-only; populated on GET (not stored here), not user-configurable via config.json",
-	"/properties/mcp/properties/client_configs/items|oauth_token_url":        "response-only; populated on GET (not stored here), not user-configurable via config.json",
-	"/properties/mcp/properties/client_configs/items|oauth_registration_url": "response-only; populated on GET (not stored here), not user-configurable via config.json",
-	"/properties/mcp/properties/client_configs/items|oauth_scopes":           "response-only; populated on GET (not stored here), not user-configurable via config.json",
-	"/properties/mcp/properties/client_configs/items|oauth_resource":         "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_authorize_url":         "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_token_url":             "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_registration_url":      "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_scopes":                "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_resource":              "response-only; populated on GET (not stored here), not user-configurable via config.json",
+	"/properties/mcp/properties/client_configs/items|oauth_redirect_uri_override": "response-only; populated on GET (not stored here), not user-configurable outside inline oauth_config",
 	// oauth_config_id is a server-managed reference to the oauth_configs row, minted by the
 	// admin verification flow; config.go clears any value supplied via config.json.
 	"/properties/mcp/properties/client_configs/items|oauth_config_id": "server-managed oauth_configs reference; config.go clears any config.json-supplied value",
 	// The inline oauth_config block (schemas.OAuth2Config) carries four fields beyond the
 	// user-facing set the UI form / config.schema.json document (client_id, client_secret,
-	// authorize_url, token_url, registration_url, scopes, resource). These four are managed /
-	// derived / deprecated and are never authored in the inline config.json oauth_config block.
+	// authorize_url, token_url, registration_url, redirect_uri_override, scopes, resource,
+	// use_client_metadata_document). These four are managed / derived / deprecated and are
+	// never authored in the inline config.json oauth_config block.
 	"/properties/mcp/properties/client_configs/items/properties/oauth_config|id":            "server-generated oauth_configs row id; not authored in the inline oauth_config block",
 	"/properties/mcp/properties/client_configs/items/properties/oauth_config|redirect_uri":  "computed by Bifrost (MCP OAuth callback URI); not authored in config.json",
 	"/properties/mcp/properties/client_configs/items/properties/oauth_config|server_url":    "derived from the client connection_string for OAuth discovery; not authored in config.json",

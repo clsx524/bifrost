@@ -17,6 +17,7 @@ export function buildOAuthConfigPayload(
 		authorize_url: oauth?.authorize_url || undefined,
 		token_url: oauth?.token_url || undefined,
 		registration_url: oauth?.registration_url || undefined,
+		redirect_uri_override: viaClientMetadataDocument ? undefined : oauth?.redirect_uri_override?.trim() || undefined,
 		scopes: scopesText.trim() ? parseArrayFromText(scopesText) : undefined,
 		server_url: serverURL || undefined,
 		resource: resourceText.trim() || undefined,

@@ -185,17 +185,25 @@ func (h *MCPHandler) refuseTakenMCPClientNameOrSlug(ctx *fasthttp.RequestCtx, na
 // caller's concern.
 func (h *MCPHandler) runOAuthBootstrap(ctx *fasthttp.RequestCtx, oauthCfg *OAuthConfigRequest, serverURL string, requirePublicTarget bool) (*schemas.OAuth2FlowInitiation, error) {
 	base := lib.BuildBaseURL(ctx, h.store.GetMCPExternalClientURL())
-	redirectURI := base + oauthCallbackPath
+	redirectURIOverride := oauthCfg.redirectURIOverride()
+	if err := schemas.ValidateOAuthRedirectURIOverride(redirectURIOverride); err != nil {
+		return nil, err
+	}
+	if redirectURIOverride != "" && oauthCfg.UseClientMetadataDocument {
+		return nil, oauth2.ErrRedirectURIOverrideWithClientMetadataDocument
+	}
+	redirectURI := mcputils.ResolveOAuthRedirectURI(base+oauthCallbackPath, redirectURIOverride)
 	return h.oauthHandler.InitiateOAuthFlow(ctx, OAuthInitiationRequest{
-		ClientID:        oauthCfg.ClientID,
-		ClientSecret:    oauthCfg.ClientSecret,
-		AuthorizeURL:    oauthCfg.AuthorizeURL,
-		TokenURL:        oauthCfg.TokenURL,
-		RegistrationURL: oauthCfg.RegistrationURL,
-		RedirectURI:     redirectURI,
-		Scopes:          oauthCfg.Scopes,
-		ServerURL:       serverURL,
-		Resource:        oauthCfg.Resource,
+		ClientID:            oauthCfg.ClientID,
+		ClientSecret:        oauthCfg.ClientSecret,
+		AuthorizeURL:        oauthCfg.AuthorizeURL,
+		TokenURL:            oauthCfg.TokenURL,
+		RegistrationURL:     oauthCfg.RegistrationURL,
+		RedirectURI:         redirectURI,
+		RedirectURIOverride: redirectURIOverride,
+		Scopes:              oauthCfg.Scopes,
+		ServerURL:           serverURL,
+		Resource:            oauthCfg.Resource,
 
 		RequirePublicTarget:       requirePublicTarget,
 		ClientMetadataURL:         h.oauthHandler.oauthProvider.ClientMetadataDocumentURL(redirectURI),
@@ -308,15 +316,24 @@ func (h *MCPHandler) startMCPClientReauthorization(ctx *fasthttp.RequestCtx, rer
 		return
 	}
 
+	oauthConfig, err := h.store.ConfigStore.GetOauthConfigByID(ctx, *clientConfig.OauthConfigID)
+	if err != nil {
+		SendError(ctx, fasthttp.StatusInternalServerError, fmt.Sprintf("Failed to load OAuth config: %v", err))
+		return
+	}
+	if oauthConfig == nil {
+		SendError(ctx, fasthttp.StatusInternalServerError, fmt.Sprintf("OAuth config %s no longer exists", *clientConfig.OauthConfigID))
+		return
+	}
+
 	// Register the replacement client BEFORE the flow is initiated, so the
 	// authorize URL this call hands back is already built from it. Doing it
 	// after would hand the admin a URL carrying the client_id that was just
 	// replaced, which is the failure this exists to fix.
 	// Computed once and used for both the registration and the consent behind
 	// it: the provider checks the authorize request's redirect_uri against
-	// what THAT client was registered with, so the two must be the same value,
-	// not two values that happen to agree until the external URL changes.
-	redirectURI := lib.BuildBaseURL(ctx, h.store.GetMCPExternalClientURL()) + "/api/oauth/callback"
+	// what THAT client was registered with, so the two must be the same value.
+	redirectURI := mcputils.ResolveOAuthRedirectURI(lib.BuildBaseURL(ctx, h.store.GetMCPExternalClientURL())+oauthCallbackPath, oauthConfig.RedirectURIOverride)
 
 	var previousClientID, newClientID string
 	rotated := false
@@ -1138,7 +1155,12 @@ func (h *MCPHandler) verifyMCPClientExchange(ctx *fasthttp.RequestCtx) {
 // allowlist does not permit, or endpoints discovery could not find, and 500 otherwise.
 func oauthBootstrapErrorStatus(err error) int {
 	var blocked *network.PrivateTargetNotAllowedError
-	if errors.Is(err, oauth2.ErrClientMetadataDocumentWithClientID) || errors.Is(err, oauth2.ErrClientMetadataDocumentUnavailable) || errors.Is(err, oauth2.ErrOAuthDiscoveryFailed) || errors.As(err, &blocked) {
+	if errors.Is(err, oauth2.ErrClientMetadataDocumentWithClientID) ||
+		errors.Is(err, oauth2.ErrClientMetadataDocumentUnavailable) ||
+		errors.Is(err, oauth2.ErrOAuthDiscoveryFailed) ||
+		errors.Is(err, oauth2.ErrRedirectURIOverrideWithClientMetadataDocument) ||
+		errors.Is(err, schemas.ErrInvalidOAuthRedirectURIOverride) ||
+		errors.As(err, &blocked) {
 		return fasthttp.StatusBadRequest
 	}
 	return fasthttp.StatusInternalServerError
@@ -1152,6 +1174,10 @@ func pendingOAuthConfigToRequest(cfg *schemas.OAuth2Config) *OAuthConfigRequest 
 		Resource:     cfg.Resource,
 
 		UseClientMetadataDocument: cfg.UseClientMetadataDocument,
+	}
+	if cfg.RedirectURIOverride != "" {
+		redirectURIOverride := cfg.RedirectURIOverride
+		req.RedirectURIOverride = &redirectURIOverride
 	}
 	if cfg.ClientID.IsSet() {
 		req.ClientID = cfg.ClientID
@@ -1990,6 +2016,7 @@ func (h *MCPHandler) getMCPClientsPaginated(ctx *fasthttp.RequestCtx, params con
 					clientConfig.OauthRegistrationURL = *oauthCfg.RegistrationURL
 				}
 				clientConfig.OauthResource = oauthCfg.Resource
+				clientConfig.OauthRedirectURIOverride = oauthCfg.RedirectURIOverride
 				if oauthCfg.Scopes != "" {
 					_ = json.Unmarshal([]byte(oauthCfg.Scopes), &clientConfig.OauthScopes)
 				}
@@ -2197,13 +2224,14 @@ func (h *MCPHandler) refreshMCPClientTools(ctx *fasthttp.RequestCtx) {
 
 // OAuthConfigRequest represents OAuth configuration in the request
 type OAuthConfigRequest struct {
-	ClientID        *schemas.SecretVar `json:"client_id"`
-	ClientSecret    *schemas.SecretVar `json:"client_secret"`
-	AuthorizeURL    string             `json:"authorize_url"`
-	TokenURL        string             `json:"token_url"`
-	RegistrationURL string             `json:"registration_url"`
-	Scopes          []string           `json:"scopes"`
-	Resource        string             `json:"resource"`
+	ClientID            *schemas.SecretVar `json:"client_id"`
+	ClientSecret        *schemas.SecretVar `json:"client_secret"`
+	AuthorizeURL        string             `json:"authorize_url"`
+	TokenURL            string             `json:"token_url"`
+	RegistrationURL     string             `json:"registration_url"`
+	Scopes              []string           `json:"scopes"`
+	Resource            string             `json:"resource"`
+	RedirectURIOverride *string            `json:"redirect_uri_override,omitempty"` // Optional exact redirect_uri for providers that require a loopback callback
 
 	UseClientMetadataDocument bool `json:"use_client_metadata_document,omitempty"` // Register with Bifrost's Client ID Metadata Document
 }
@@ -2269,6 +2297,13 @@ func (m *MCPSyncInterval) Resolve(existing time.Duration) (time.Duration, error)
 		return 0, err
 	}
 	return m.Duration, nil
+}
+
+func (c *OAuthConfigRequest) redirectURIOverride() string {
+	if c == nil || c.RedirectURIOverride == nil {
+		return ""
+	}
+	return strings.TrimSpace(*c.RedirectURIOverride)
 }
 
 // MCPClientRequest represents the full MCP client creation request with OAuth support.
@@ -3808,13 +3843,14 @@ func (h *MCPHandler) updateMCPClient(ctx *fasthttp.RequestCtx) {
 		// slice fields use the same "empty means not provided" convention
 		// the config.json path already uses for this block.
 		resolvedOauthFields = configstore.MCPOAuthConfigFields{
-			ClientID:        existingOauthConfig.ClientID,
-			ClientSecret:    existingOauthConfig.ClientSecret,
-			AuthorizeURL:    existingOauthConfig.AuthorizeURL,
-			TokenURL:        existingOauthConfig.TokenURL,
-			RegistrationURL: "",
-			Resource:        existingOauthConfig.Resource,
-			Scopes:          nil,
+			ClientID:            existingOauthConfig.ClientID,
+			ClientSecret:        existingOauthConfig.ClientSecret,
+			AuthorizeURL:        existingOauthConfig.AuthorizeURL,
+			TokenURL:            existingOauthConfig.TokenURL,
+			RegistrationURL:     "",
+			Resource:            existingOauthConfig.Resource,
+			Scopes:              nil,
+			RedirectURIOverride: existingOauthConfig.RedirectURIOverride,
 		}
 		if existingOauthConfig.RegistrationURL != nil {
 			resolvedOauthFields.RegistrationURL = *existingOauthConfig.RegistrationURL
@@ -3848,6 +3884,15 @@ func (h *MCPHandler) updateMCPClient(ctx *fasthttp.RequestCtx) {
 		// value, so a request to clear scopes silently no-op'd.
 		if req.OauthConfig.Scopes != nil {
 			resolvedOauthFields.Scopes = req.OauthConfig.Scopes
+		}
+		if req.OauthConfig.RedirectURIOverride != nil {
+			redirectURIOverride := strings.TrimSpace(*req.OauthConfig.RedirectURIOverride)
+			if err := schemas.ValidateOAuthRedirectURIOverride(redirectURIOverride); err != nil {
+				SendError(ctx, fasthttp.StatusBadRequest, err.Error())
+				return
+			}
+			resolvedOauthFields.RedirectURIOverride = redirectURIOverride
+			resolvedOauthFields.SetRedirectURIOverride = true
 		}
 		// Changing where credentials get sent (token_url/authorize_url) while
 		// silently carrying over the stored client_secret would POST that

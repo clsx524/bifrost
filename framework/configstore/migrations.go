@@ -608,6 +608,7 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_oauth2_authorize_requests_device_code_columns"}, run: migrationAddOAuth2AuthorizeRequestsDeviceCodeColumns},
 	{IDs: []string{"add_oauth2_authorize_requests_device_code_indexes"}, run: migrationAddOAuth2AuthorizeRequestsDeviceCodeIndexes},
 	{IDs: []string{"add_client_config_mcp_server_max_protocol_version_column"}, run: migrationAddClientConfigMCPServerMaxProtocolVersionColumn},
+	{IDs: []string{"add_oauth_redirect_uri_override_column"}, run: migrationAddOAuthRedirectURIOverrideColumn},
 }
 
 // warpLogEmbeddingColumns are the semantic-search configuration columns added
@@ -17716,4 +17717,29 @@ func oauth2AuthorizeRequestsDeviceCodeIndexesMigration(ctx context.Context, id s
 			return nil
 		},
 	}
+}
+
+// migrationAddOAuthRedirectURIOverrideColumn persists the exact upstream
+// redirect URI independently from the flow's effective callback.
+func migrationAddOAuthRedirectURIOverrideColumn(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_oauth_redirect_uri_override_column"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	m := migrator.New(db.WithContext(ctx), migrator.DefaultOptions, []*migrator.Migration{{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			tx = tx.WithContext(ctx)
+			if err := setMigrationLockTimeout(tx); err != nil {
+				return err
+			}
+			return addColumnIfNotExists(tx, logger, &tables.TableOauthConfig{}, "redirect_uri_override")
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return dropColumnIfExists(tx.WithContext(ctx), logger, &tables.TableOauthConfig{}, "redirect_uri_override")
+		},
+	}})
+	if err := m.Migrate(); err != nil {
+		return fmt.Errorf("error running %s migration: %w", migrationName, err)
+	}
+	return nil
 }
